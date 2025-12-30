@@ -295,6 +295,21 @@ if uploaded_file:
 
     # weekly x category
     with tabs[4]:
+        st.subheader("Category Trends (Week by Week)")
+
+        fig_trend = px.line(
+            weekly_category,
+            x="Week",
+            y="Hours spent",
+            color="Category",
+            markers=True,
+            title="Weekly Hours Trend per Category"
+        )
+
+        fig_trend.update_layout(hovermode="x unified")
+        st.plotly_chart(fig_trend, use_container_width=True)
+        st.divider()
+
         fig = px.bar(
             weekly_category,
             x="Week",
