@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import numpy as np
+import os
 from datetime import date
 
 SEMESTER_START = date(2025, 9, 2)
@@ -153,11 +154,37 @@ def load_and_clean(csv_file):
 
 st.set_page_config(page_title="Semester Analysis", layout="wide")
 
-uploaded_file = st.sidebar.file_uploader("Upload your Notion CSV", type="csv")
+st.sidebar.title("Data Source")
+data_source = st.sidebar.radio(
+    "Choose data source",
+    ["Upload CSV", "View Sample File"]
+)
 
-if uploaded_file:
-    df = load_and_clean(uploaded_file)
-    st.title(f"{uploaded_file.name.replace(".csv", "")}")
+target_file = None
+file_name_display = ""
+
+if data_source == "Upload CSV":
+    uploaded_file = st.sidebar.file_uploader("Upload your Notion CSV", type="csv")
+    if uploaded_file:
+        target_file = uploaded_file
+        file_name_display = uploaded_file.name
+else:
+    logs_dir = "logs"
+    if os.path.exists(logs_dir):
+        sample_files = [f for f in os.listdir(logs_dir) if f.endswith(".csv")]
+        if sample_files:
+            selected_sample = st.sidebar.selectbox("Select sample file", sample_files)
+            if selected_sample:
+                target_file = os.path.join(logs_dir, selected_sample)
+                file_name_display = selected_sample
+        else:
+            st.sidebar.info("No sample files found in 'logs/' folder")
+    else:
+        st.sidebar.error("'logs/' folder not found")
+
+if target_file:
+    df = load_and_clean(target_file)
+    st.title(f"{file_name_display.replace('.csv', '')}")
 
     # sidebar filters
     st.sidebar.header("Filters")
@@ -225,7 +252,7 @@ if uploaded_file:
         "Weekly × Category",
         "Insights",
         "Categories",
-        "Holidays",
+        # "Holidays",
         "Raw Data"
     ])
 
@@ -375,7 +402,7 @@ if uploaded_file:
         max_val = weekly_pivot.stack().max()
 
         st.success(
-            f"Most intense week ever: **{max_idx[1]}** — "
+            f"Most intense week: **{max_idx[1]}** — "
             f"{max_val:.1f} hrs (week of {max_idx[0].strftime("%b %d")})"
         )
 
@@ -405,25 +432,25 @@ if uploaded_file:
         st.plotly_chart(fig, use_container_width=True)
 
     # holidays
-    with tabs[7]:
-        h = (
-            df.groupby("Is Holiday")["Hours spent"]
-            .sum()
-            .reset_index()
-        )
-        h["Is Holiday"] = h["Is Holiday"].map({True: "Holiday", False: "Normal Day"})
+    # with tabs[7]:
+    #     h = (
+    #         df.groupby("Is Holiday")["Hours spent"]
+    #         .sum()
+    #         .reset_index()
+    #     )
+    #     h["Is Holiday"] = h["Is Holiday"].map({True: "Holiday", False: "Normal Day"})
 
-        fig = px.bar(
-            h,
-            x="Is Holiday",
-            y="Hours spent",
-            title="Holiday vs Normal Day Effort"
-        )
-        st.plotly_chart(fig, use_container_width=True)
+    #     fig = px.bar(
+    #         h,
+    #         x="Is Holiday",
+    #         y="Hours spent",
+    #         title="Holiday vs Normal Day Effort"
+    #     )
+    #     st.plotly_chart(fig, use_container_width=True)
 
     # raw data
-    with tabs[8]:
+    with tabs[7]:
         st.dataframe(df.sort_values("Date"))
 
 else:
-    st.info("Upload your Notion CSV to begin")
+    st.info("Upload or select a data source to begin")
