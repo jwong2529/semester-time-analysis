@@ -19,7 +19,7 @@ def is_holiday(d):
     return False
 
 def compute_crunch_weeks(weekly_totals, z_threshold=1.5):
-    # Identifies crunch weeks using z-scores.
+    # Identifies crunch weeks using z-scores. 
     # A crunch week is defined as one where: z-score > z_threshold
   
     std = weekly_totals.std()
@@ -51,12 +51,12 @@ def generate_insights(df, weekly_totals, weekly_pivot, category_stats):
     lightest_week = weekly_totals.idxmin()
 
     insights.append(
-        f"Your busiest week was **the week of {busiest_week.strftime('%b %d')}**, "
+        f"Your busiest week was **the week of {busiest_week.strftime("%b %d")}**, "
         f"with **{weekly_totals[busiest_week]:.1f} hours** logged."
     )
 
     insights.append(
-        f"Your lightest week was **the week of {lightest_week.strftime('%b %d')}**, "
+        f"Your lightest week was **the week of {lightest_week.strftime("%b %d")}**, "
         f"with **{weekly_totals[lightest_week]:.1f} hours**."
     )
 
@@ -83,7 +83,7 @@ def generate_insights(df, weekly_totals, weekly_pivot, category_stats):
 
     insights.append(
         f"The most intense single week-category combination was "
-        f"**{max_idx[1]}** during the week of **{max_idx[0].strftime('%b %d')}**, "
+        f"**{max_idx[1]}** during the week of **{max_idx[0].strftime("%b %d")}**, "
         f"with **{max_val:.1f} hours**."
     )
 
@@ -157,7 +157,7 @@ uploaded_file = st.sidebar.file_uploader("Upload your Notion CSV", type="csv")
 
 if uploaded_file:
     df = load_and_clean(uploaded_file)
-    st.title(f"{uploaded_file.name.replace('.csv', '')}")
+    st.title(f"{uploaded_file.name.replace(".csv", "")}")
 
     # sidebar filters
     st.sidebar.header("Filters")
@@ -293,6 +293,24 @@ if uploaded_file:
         )
         st.plotly_chart(fig, use_container_width=True)
 
+        daily_total_hours = df.groupby(df["Date"].dt.date)["Hours spent"].sum().reset_index()
+        daily_total_hours["Day of Week"] = pd.to_datetime(daily_total_hours["Date"]).dt.day_name()
+
+        average_daily_total_hours = (
+            daily_total_hours.groupby("Day of Week")["Hours spent"]
+            .mean()
+            .reindex(order)
+            .reset_index()
+        )
+
+        fig_avg_daily = px.bar(
+            average_daily_total_hours,
+            x="Day of Week",
+            y="Hours spent",
+            title="Average Total Hours Per Weekday"
+        )
+        st.plotly_chart(fig_avg_daily, use_container_width=True)
+
     # weekly x category
     with tabs[4]:
         st.subheader("Category Trends (Week by Week)")
@@ -358,7 +376,7 @@ if uploaded_file:
 
         st.success(
             f"Most intense week ever: **{max_idx[1]}** — "
-            f"{max_val:.1f} hrs (week of {max_idx[0].strftime('%b %d')})"
+            f"{max_val:.1f} hrs (week of {max_idx[0].strftime("%b %d")})"
         )
 
         # crunch weeks 
@@ -368,7 +386,7 @@ if uploaded_file:
             st.warning("Crunch Weeks Detected")
             for wk, score in crunch.items():
                 st.write(
-                    f"- Week of {wk.strftime('%b %d')}: "
+                    f"- Week of {wk.strftime("%b %d")}: "
                     f"{weekly_totals[wk]:.1f} hrs (z={score:.2f})"
                 )
         else:
