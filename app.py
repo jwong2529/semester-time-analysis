@@ -137,8 +137,8 @@ def load_and_clean(csv_file):
     df = df.dropna(subset=["Date"])
     df["Hours spent"] = pd.to_numeric(df["Hours spent"], errors="coerce").fillna(0)
 
-    # Monday → Sunday weeks
-    df["Week"] = df["Date"].dt.to_period("W-MON").apply(lambda r: r.start_time)
+    # Monday → Sunday weeks (starts on Monday)
+    df["Week"] = df["Date"].dt.to_period("W-SUN").apply(lambda r: r.start_time)
 
     df["Day of Week"] = df["Date"].dt.day_name()
     df["Is Weekend"] = df["Date"].dt.weekday >= 5
@@ -204,6 +204,22 @@ if target_file:
 
     exclude_holidays = st.sidebar.checkbox("Exclude holidays", value=False)
 
+    min_weekly_hours = st.sidebar.slider(
+        "Min hours to include week in averages",
+        min_value=0,
+        max_value=40,
+        value=0,
+        help="Exclude weeks where you logged fewer than this many hours (e.g. spring break)."
+    )
+
+    available_weeks = sorted(df["Week"].unique())
+    weeks_to_exclude = st.sidebar.multiselect(
+        "Exclude specific weeks",
+        available_weeks,
+        format_func=lambda x: x.strftime("%b %d"),
+        help="Manually select weeks to remove from the analysis."
+    )
+
     # apply filters
     if categories:
         df = df[df["Category"].isin(categories)]
@@ -219,6 +235,15 @@ if target_file:
     if exclude_holidays:
         df = df[~df["Is Holiday"]]
 
+    # Identify excluded weeks for stats, but keep them in df for charts
+    weeks_to_exclude_final = list(weeks_to_exclude)
+    if min_weekly_hours > 0:
+        temp_weekly = df.groupby("Week")["Hours spent"].sum()
+        low_activity_weeks = temp_weekly[temp_weekly < min_weekly_hours].index
+        weeks_to_exclude_final.extend(low_activity_weeks)
+    
+    weeks_to_exclude_final = list(set(weeks_to_exclude_final))
+
     # tables
     weekly_category = (
         df.groupby(["Week", "Category"])["Hours spent"]
@@ -232,16 +257,22 @@ if target_file:
         values="Hours spent"
     ).fillna(0)
 
-    weekly_totals = weekly_pivot.sum(axis=1)
+    # All-time totals for charts
+    weekly_totals_all = weekly_pivot.sum(axis=1)
 
-    if weekly_pivot.empty or len(weekly_pivot.columns) == 0:
-        st.warning("No data found for the selected filters and date range. Please adjust your filters.")
+    # Filtered totals for stats/averages
+    weekly_pivot_stats = weekly_pivot[~weekly_pivot.index.isin(weeks_to_exclude_final)]
+    
+    if weekly_pivot_stats.empty or len(weekly_pivot_stats.columns) == 0:
+        st.warning("No data found for the selected filters and typical weeks. Please adjust your filters.")
         st.stop()
 
-    category_stats = weekly_pivot.describe().T
-    category_stats["avg_per_week"] = weekly_pivot.mean()
-    category_stats["max_week"] = weekly_pivot.max()
-    category_stats["std_dev"] = weekly_pivot.std()
+    weekly_totals_stats = weekly_pivot_stats.sum(axis=1)
+    
+    category_stats = weekly_pivot_stats.describe().T
+    category_stats["avg_per_week"] = weekly_pivot_stats.mean()
+    category_stats["max_week"] = weekly_pivot_stats.max()
+    category_stats["std_dev"] = weekly_pivot_stats.std()
     category_stats["consistency_score"] = (
         category_stats["std_dev"] / category_stats["avg_per_week"]
     )
@@ -264,9 +295,9 @@ if target_file:
         st.subheader("Auto-Generated Report")
 
         insights = generate_insights(
-            df,
-            weekly_totals,
-            weekly_pivot,
+            df[~df["Week"].isin(weeks_to_exclude_final)],
+            weekly_totals_stats,
+            weekly_pivot_stats,
             category_stats
         )
 
@@ -276,12 +307,12 @@ if target_file:
     # overview
     with tabs[1]:
         total_hours = df["Hours spent"].sum()
-        avg_weekly = weekly_totals.mean()
+        avg_weekly = weekly_totals_stats.mean()
 
         c1, c2, c3 = st.columns(3)
-        c1.metric("Total Hours", f"{total_hours:.1f}")
-        c2.metric("Avg Hours / Week", f"{avg_weekly:.1f}")
-        c3.metric("Total Weeks", len(weekly_totals))
+        c1.metric("Total Hours (All)", f"{total_hours:.1f}")
+        c2.metric("Avg Hours / Typical Week", f"{avg_weekly:.1f}")
+        c3.metric("Typical Weeks", len(weekly_totals_stats))
 
         cum = df.sort_values("Date")
         cum["Cumulative Hours"] = cum["Hours spent"].cumsum()
@@ -297,11 +328,11 @@ if target_file:
     # weekly
     with tabs[2]:
         fig = px.bar(
-            weekly_totals.reset_index(),
+            weekly_totals_all.reset_index(),
             x="Week",
             y=0,
             labels={"0": "Hours"},
-            title="Total Hours per Week"
+            title="Total Hours per Week (Including Atypical Weeks)"
         )
         st.plotly_chart(fig, use_container_width=True)
 
@@ -377,19 +408,19 @@ if target_file:
 
     # insights
     with tabs[5]:
-        busiest_week = weekly_totals.idxmax()
-        lightest_week = weekly_totals.idxmin()
+        busiest_week = weekly_totals_stats.idxmax()
+        lightest_week = weekly_totals_stats.idxmin()
 
         c1, c2 = st.columns(2)
         c1.metric(
-            "Busiest Week",
+            "Busiest Typical Week",
             busiest_week.strftime("%b %d"),
-            f"{weekly_totals[busiest_week]:.1f} hrs"
+            f"{weekly_totals_stats[busiest_week]:.1f} hrs"
         )
         c2.metric(
-            "Lightest Week",
+            "Lightest Typical Week",
             lightest_week.strftime("%b %d"),
-            f"{weekly_totals[lightest_week]:.1f} hrs"
+            f"{weekly_totals_stats[lightest_week]:.1f} hrs"
         )
 
         st.subheader("Category Weekly Stats")
@@ -400,17 +431,17 @@ if target_file:
 
         st.dataframe(display_stats.style.format("{:.2f}"))
 
-        # most intense category-week ever
+        # most intense category-week ever (including atypical)
         max_idx = weekly_pivot.stack().idxmax()
         max_val = weekly_pivot.stack().max()
 
         st.success(
-            f"Most intense week: **{max_idx[1]}** — "
+            f"Most intense week ever: **{max_idx[1]}** — "
             f"{max_val:.1f} hrs (week of {max_idx[0].strftime("%b %d")})"
         )
 
         # crunch weeks 
-        z_scores, crunch = compute_crunch_weeks(weekly_totals)
+        z_scores, crunch = compute_crunch_weeks(weekly_totals_stats)
 
         if not crunch.empty:
             st.warning("Crunch Weeks Detected")
