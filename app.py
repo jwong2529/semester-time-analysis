@@ -33,38 +33,38 @@ def compute_crunch_weeks(weekly_totals, z_threshold=1.5):
 
     return z_scores, crunch_weeks
 
-def generate_insights(df, weekly_totals, weekly_pivot, category_stats):
+def generate_insights(df_all, df_stats, weekly_totals_stats, weekly_pivot_stats, category_stats):
     insights = []
 
-    total_hours = df["Hours spent"].sum()
-    avg_weekly = weekly_totals.mean()
+    total_hours = df_all["Hours spent"].sum()
+    avg_weekly = weekly_totals_stats.mean()
 
     insights.append(
         f"You logged **{total_hours:.1f} total hours** this semester, "
         f"averaging **{avg_weekly:.1f} hours per week**."
     )
 
-    # busiest & lightest weeks
-    busiest_week = weekly_totals.idxmax()
-    lightest_week = weekly_totals.idxmin()
+    # busiest & lightest weeks (using typical weeks for stats)
+    busiest_week = weekly_totals_stats.idxmax()
+    lightest_week = weekly_totals_stats.idxmin()
 
     insights.append(
-        f"Your busiest week was **the week of {busiest_week.strftime("%b %d")}**, "
-        f"with **{weekly_totals[busiest_week]:.1f} hours** logged."
+        f"Your busiest typical week was **the week of {busiest_week.strftime("%b %d")}**, "
+        f"with **{weekly_totals_stats[busiest_week]:.1f} hours** logged."
     )
 
     insights.append(
-        f"Your lightest week was **the week of {lightest_week.strftime("%b %d")}**, "
-        f"with **{weekly_totals[lightest_week]:.1f} hours**."
+        f"Your lightest typical week was **the week of {lightest_week.strftime("%b %d")}**, "
+        f"with **{weekly_totals_stats[lightest_week]:.1f} hours**."
     )
 
     # category dominance
-    category_totals = df.groupby("Category")["Hours spent"].sum()
+    category_totals = df_all.groupby("Category")["Hours spent"].sum()
     top_category = category_totals.idxmax()
-    top_category_pct = category_totals.max() / total_hours * 100
+    top_category_pct = category_totals.max() / total_hours * 100 if total_hours > 0 else 0
 
     insights.append(
-        f"Your most time-consuming category was **{top_category}**, "
+        f"Your most time-consuming category overall was **{top_category}**, "
         f"accounting for **{top_category_pct:.1f}%** of your total time."
     )
 
@@ -75,26 +75,26 @@ def generate_insights(df, weekly_totals, weekly_pivot, category_stats):
         f"showing relatively steady weekly effort."
     )
 
-    # most intense category-week
-    max_idx = weekly_pivot.stack().idxmax()
-    max_val = weekly_pivot.stack().max()
+    # most intense category-week (using stats weeks to avoid finals skew)
+    max_idx = weekly_pivot_stats.stack().idxmax()
+    max_val = weekly_pivot_stats.stack().max()
 
     insights.append(
-        f"The most intense single week-category combination was "
+        f"Your most intense typical week-category combo was "
         f"**{max_idx[1]}** during the week of **{max_idx[0].strftime("%b %d")}**, "
         f"with **{max_val:.1f} hours**."
     )
 
     # weekend behavior
-    weekend_hours = df[df["Is Weekend"]]["Hours spent"].sum()
+    weekend_hours = df_all[df_all["Is Weekend"]]["Hours spent"].sum()
     weekend_pct = weekend_hours / total_hours * 100 if total_hours > 0 else 0
 
     insights.append(
-        f"Approximately **{weekend_pct:.1f}%** of your total work time happened on weekends."
+        f"Approximately **{weekend_pct:.1f}%** of your total work time (all weeks) happened on weekends."
     )
 
     # crunch weeks 
-    _, crunch_weeks = compute_crunch_weeks(weekly_totals)
+    _, crunch_weeks = compute_crunch_weeks(weekly_totals_stats)
 
     if not crunch_weeks.empty:
         insights.append(
@@ -107,11 +107,11 @@ def generate_insights(df, weekly_totals, weekly_pivot, category_stats):
         )
 
     # trend over time
-    if len(weekly_totals) < 2:
+    if len(weekly_totals_stats) < 2:
         slope = 0
     else:
-        week_numbers = np.arange(len(weekly_totals))
-        slope = np.polyfit(week_numbers, weekly_totals.values, 1)[0]
+        week_numbers = np.arange(len(weekly_totals_stats))
+        slope = np.polyfit(week_numbers, weekly_totals_stats.values, 1)[0]
 
     if slope > 0.5:
         insights.append("Your workload **increased over the semester**, suggesting rising intensity toward the end.")
@@ -119,6 +119,12 @@ def generate_insights(df, weekly_totals, weekly_pivot, category_stats):
         insights.append("Your workload **decreased over the semester**, possibly indicating front-loaded effort.")
     else:
         insights.append("Your workload remained **fairly stable throughout the semester**.")
+
+    # Consistency insight (uses full df)
+    daily_logged = df_all.groupby(df_all["Date"].dt.date)["Hours spent"].sum()
+    total_days = (df_all["Date"].max() - df_all["Date"].min()).days + 1
+    consistency = (len(daily_logged) / total_days) * 100
+    insights.append(f"Overall, you logged hours on **{len(daily_logged)} out of {total_days} days** ({consistency:.1f}% consistency).")
 
     return insights
 
@@ -295,7 +301,8 @@ if target_file:
         st.subheader("Auto-Generated Report")
 
         insights = generate_insights(
-            df[~df["Week"].isin(weeks_to_exclude_final)],
+            df, # df is currently the base-filtered one (all weeks)
+            df[~df["Week"].isin(weeks_to_exclude_final)], # filtered for stats
             weekly_totals_stats,
             weekly_pivot_stats,
             category_stats
@@ -308,11 +315,44 @@ if target_file:
     with tabs[1]:
         total_hours = df["Hours spent"].sum()
         avg_weekly = weekly_totals_stats.mean()
+        
+        # Consistency and Streaks
+        daily_hours = df.groupby("Date")["Hours spent"].sum().sort_index()
+        all_dates = pd.date_range(start=df["Date"].min(), end=df["Date"].max())
+        daily_series = daily_hours.reindex(all_dates, fill_value=0)
+        
+        # Calculate streak
+        is_working = daily_series > 0
+        streaks = is_working.groupby((is_working != is_working.shift()).cumsum()).cumsum()
+        max_streak = streaks.max()
 
-        c1, c2, c3 = st.columns(3)
+        c1, c2, c3, c4 = st.columns(4)
         c1.metric("Total Hours (All)", f"{total_hours:.1f}")
         c2.metric("Avg Hours / Typical Week", f"{avg_weekly:.1f}")
         c3.metric("Typical Weeks", len(weekly_totals_stats))
+        c4.metric("Longest Streak", f"{max_streak} days")
+
+        st.divider()
+        
+        # Daily Intensity Heatmap (GitHub style)
+        st.subheader("Daily Activity Pulse")
+        daily_df = daily_series.reset_index()
+        daily_df.columns = ["Date", "Hours"]
+        daily_df["Week"] = daily_df["Date"].dt.isocalendar().week
+        daily_df["Day"] = daily_df["Date"].dt.day_name()
+        
+        day_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+        heat_data = daily_df.pivot(index="Day", columns="Week", values="Hours").reindex(day_order)
+        
+        fig_heat = px.imshow(
+            heat_data,
+            color_continuous_scale="Viridis",
+            labels=dict(x="Week of Year", y="Day of Week", color="Hours"),
+            title="Daily Intensity (Hours per Day)"
+        )
+        st.plotly_chart(fig_heat, use_container_width=True)
+
+        st.divider()
 
         cum = df.sort_values("Date")
         cum["Cumulative Hours"] = cum["Hours spent"].cumsum()
@@ -371,6 +411,22 @@ if target_file:
             title="Average Total Hours Per Weekday"
         )
         st.plotly_chart(fig_avg_daily, use_container_width=True)
+
+        st.divider()
+        st.subheader("Weekday Category Focus")
+        st.write("Which categories do you typically work on for each day of the week?")
+        
+        day_cat = df.groupby(["Day of Week", "Category"])["Hours spent"].mean().reset_index()
+        fig_day_cat = px.bar(
+            day_cat,
+            x="Day of Week",
+            y="Hours spent",
+            color="Category",
+            category_orders={"Day of Week": order},
+            title="Average Hours per Category by Weekday",
+            barmode="stack"
+        )
+        st.plotly_chart(fig_day_cat, use_container_width=True)
 
     # weekly x category
     with tabs[4]:
@@ -455,15 +511,41 @@ if target_file:
 
     # categories
     with tabs[6]:
+        col1, col2 = st.columns([1, 1])
+        
         cat = df.groupby("Category")["Hours spent"].sum().reset_index()
 
-        fig = px.pie(
-            cat,
-            names="Category",
-            values="Hours spent",
-            title="Time Distribution by Category"
-        )
-        st.plotly_chart(fig, use_container_width=True)
+        with col1:
+            fig = px.pie(
+                cat,
+                names="Category",
+                values="Hours spent",
+                title="Time Distribution by Category"
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+        with col2:
+            # Cumulative Growth by Category
+            st.write("**Cumulative Category Growth**")
+            # Create a full date range to ensure smooth lines
+            date_range_full = pd.date_range(df["Date"].min(), df["Date"].max())
+            
+            # Pivot, cumsum, and reindex
+            cat_pivot = df.pivot_table(
+                index="Date", 
+                columns="Category", 
+                values="Hours spent", 
+                aggfunc="sum"
+            ).fillna(0)
+            
+            cat_cum = cat_pivot.cumsum().reindex(date_range_full).ffill().fillna(0)
+            
+            fig_area = px.area(
+                cat_cum,
+                labels={"value": "Cumulative Hours", "index": "Date"},
+                title="Category Time Investment Over Time"
+            )
+            st.plotly_chart(fig_area, use_container_width=True)
 
     # holidays
     # with tabs[7]:
