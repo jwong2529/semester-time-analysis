@@ -5,9 +5,6 @@ import numpy as np
 import os
 from datetime import date
 
-SEMESTER_START = date(2025, 9, 2)
-SEMESTER_END = date(2025, 12, 18)
-
 HOLIDAYS = [
     (date(2025, 11, 3), date(2025, 11, 4)), # academic holiday + election day
     (date(2025, 11, 26), date(2025, 11, 28)), # thanksgiving
@@ -110,8 +107,11 @@ def generate_insights(df, weekly_totals, weekly_pivot, category_stats):
         )
 
     # trend over time
-    week_numbers = np.arange(len(weekly_totals))
-    slope = np.polyfit(week_numbers, weekly_totals.values, 1)[0]
+    if len(weekly_totals) < 2:
+        slope = 0
+    else:
+        week_numbers = np.arange(len(weekly_totals))
+        slope = np.polyfit(week_numbers, weekly_totals.values, 1)[0]
 
     if slope > 0.5:
         insights.append("Your workload **increased over the semester**, suggesting rising intensity toward the end.")
@@ -137,13 +137,7 @@ def load_and_clean(csv_file):
     df = df.dropna(subset=["Date"])
     df["Hours spent"] = pd.to_numeric(df["Hours spent"], errors="coerce").fillna(0)
 
-    # semester filter
-    df = df[
-        (df["Date"].dt.date >= SEMESTER_START) &
-        (df["Date"].dt.date <= SEMESTER_END)
-    ]
-
-    # monday → sunday weeks
+    # Monday → Sunday weeks
     df["Week"] = df["Date"].dt.to_period("W-MON").apply(lambda r: r.start_time)
 
     df["Day of Week"] = df["Date"].dt.day_name()
@@ -199,9 +193,13 @@ if target_file:
         sorted(df["Tags"].dropna().unique())
     )
 
+    # Determine default date range from data
+    data_min_date = df["Date"].min().date()
+    data_max_date = df["Date"].max().date()
+
     date_range = st.sidebar.date_input(
         "Date range",
-        [SEMESTER_START, SEMESTER_END]
+        [data_min_date, data_max_date]
     )
 
     exclude_holidays = st.sidebar.checkbox("Exclude holidays", value=False)
@@ -212,10 +210,11 @@ if target_file:
     if tags:
         df = df[df["Tags"].isin(tags)]
 
-    df = df[
-        (df["Date"].dt.date >= date_range[0]) &
-        (df["Date"].dt.date <= date_range[1])
-    ]
+    if len(date_range) == 2:
+        df = df[
+            (df["Date"].dt.date >= date_range[0]) &
+            (df["Date"].dt.date <= date_range[1])
+        ]
 
     if exclude_holidays:
         df = df[~df["Is Holiday"]]
@@ -234,6 +233,10 @@ if target_file:
     ).fillna(0)
 
     weekly_totals = weekly_pivot.sum(axis=1)
+
+    if weekly_pivot.empty or len(weekly_pivot.columns) == 0:
+        st.warning("No data found for the selected filters and date range. Please adjust your filters.")
+        st.stop()
 
     category_stats = weekly_pivot.describe().T
     category_stats["avg_per_week"] = weekly_pivot.mean()
